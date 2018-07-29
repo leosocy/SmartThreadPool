@@ -1,0 +1,36 @@
+stages:
+  - tests_and_lints
+
+variables:
+  DOCKER_REGISTRY: registry.cn-hangzhou.aliyuncs.com/leosocy
+  IMAGE: ${DOCKER_REGISTRY}/stp
+
+# -------------------- Tests --------------------
+build_test_coverage:
+  stage: tests_and_lints
+  image:
+    name: ${IMAGE}:ci
+  services:
+  coverage: '/lines[\.]+\: (\d+\.\d+)\%/'
+  script:
+    - mkdir -p test_build; cd test_build
+    - cmake ../tests; make -j build_and_test
+    - lcov -b . -d . -c -o cov.info
+    - lcov -r cov.info "/usr/*" "*/tests/*" "*/test_build/*" -o cov.info -q
+    - lcov -l cov.info
+    - bash <(curl -s https://codecov.io/bash) -t ${CODECOV_TOKEN}
+    - genhtml -o cov_result cov.info
+    - mv cov_result ..
+  artifacts:
+    name: coverage
+    paths:
+      - cov_result
+
+# -------------------- Lints --------------------
+cppcheck:
+  stage: tests_and_lints
+  image:
+    name: ${DOCKER_REGISTRY}/cppcheck:1.83
+  script:
+    - cppcheck -j 4 --enable=warning,performance --error-exitcode=1 smart_thread_pool.h
+    
