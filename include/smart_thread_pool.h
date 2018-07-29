@@ -80,9 +80,9 @@ template<class F, class... Args>
 class Task {
  public:
   using ReturnType = typename std::result_of<F(Args...)>::type;
-  Task(F&& f, Args&&... args) {
-    task_ = std::make_shared< std::packaged_task<ReturnType()> >(
-        std::bind(std::forward<F>(f), std::forward<Args>(args)...));
+  Task(F&& f, Args&&... args)
+    : task_(std::make_shared< std::packaged_task<ReturnType()> >(
+        std::bind(std::forward<F>(f), std::forward<Args>(args)...))) {
   }
   void Run() { (*task_)(); }
 
@@ -100,21 +100,8 @@ class TaskQueue {
   TaskQueue(TaskPriority priority = TaskPriority::DEFAULT, uint8_t thread_pool_id = 0)
     : priority_(priority), thread_pool_id_(thread_pool_id), alive_(true) {
   }
-  TaskQueue(TaskQueue&& other) {
-    tasks_ = std::move(other.tasks_);
-    priority_ = other.priority_;
-    thread_pool_id_ = other.thread_pool_id_;
-    alive_ = other.alive_;
-  }
-  TaskQueue& operator=(TaskQueue&& other) {
-    if (&other != this) {
-      tasks_ = std::move(other.tasks_);
-      priority_ = other.priority_;
-      thread_pool_id_ = other.thread_pool_id_;
-      alive_ = other.alive_;
-    }
-    return *this;
-  }
+  TaskQueue(TaskQueue&&) = delete;
+  TaskQueue& operator=(TaskQueue&&) = delete;
   ~TaskQueue() {
     ClearQueue();
   }

@@ -35,18 +35,12 @@ using stp::TaskQueue;
 class TaskQueueTestFixture : public testing::Test {
  protected:
   TaskQueue default_queue_;
-//   TaskQueue low_queue_;
-//   TaskQueue medium_queue_;
-//   TaskQueue high_queue_;
-//   TaskQueue urgent_queue_;
-  TaskQueueTestFixture()
-    : default_queue_(){}
+  TaskQueue low_queue_;
+  TaskQueue medium_queue_;
+  TaskQueue high_queue_;
+  TaskQueue urgent_queue_;
+  TaskQueueTestFixture() {}
   virtual void SetUp() {
-    default_queue_ = TaskQueue();
-    // low_queue_ = TaskQueue(TaskPriority::LOW);
-    // medium_queue_ = TaskQueue(TaskPriority::MEDIUM);
-    // high_queue_ = TaskQueue(TaskPriority::HIGH);
-    // urgent_queue_ = TaskQueue(TaskPriority::URGENT);
   }
   virtual void TearDown() {
     default_queue_.ClearQueue();
@@ -77,13 +71,13 @@ TEST_F(TaskQueueTestFixture, test_multithread_consume_task_but_no_task) {
     run_count += 1;
   };
   auto entry = [this](){
-    auto task = default_queue_.dequeue();
+    auto task = low_queue_.dequeue();
     if (task) {
       (*task)();
     }
   };
   auto clear_queue_entry = [this]() {
-    default_queue_.ClearQueue();
+    low_queue_.ClearQueue();
   };
   std::thread ts[16];
   for (int i = 0; i < 15; ++i) {
@@ -96,7 +90,7 @@ TEST_F(TaskQueueTestFixture, test_multithread_consume_task_but_no_task) {
   }
 
   EXPECT_EQ(run_count, 0);
-  EXPECT_EQ(default_queue_.size(), 0);
+  EXPECT_EQ(low_queue_.size(), 0);
 }
 
 TEST_F(TaskQueueTestFixture, test_multithread_run_task) {
@@ -109,8 +103,8 @@ TEST_F(TaskQueueTestFixture, test_multithread_run_task) {
     return count;
   };
   auto entry = [this, task_func](int count){
-    auto res = default_queue_.enqueue(task_func, count);
-    auto task = default_queue_.dequeue();
+    auto res = medium_queue_.enqueue(task_func, count);
+    auto task = medium_queue_.dequeue();
     if (task) {
       (*task)();
     }
@@ -125,7 +119,7 @@ TEST_F(TaskQueueTestFixture, test_multithread_run_task) {
   }
 
   EXPECT_EQ(run_count, 16);
-  EXPECT_EQ(default_queue_.size(), 0);
+  EXPECT_EQ(medium_queue_.size(), 0);
 }
 
 }   // namespace
