@@ -32,5 +32,5 @@ cppcheck:
   image:
     name: ${DOCKER_REGISTRY}/cppcheck:1.83
   script:
-    - cppcheck -j 4 --enable=warning,performance --error-exitcode=1 include
+    - cppcheck -j 4 --enable=warning,performance --error-exitcode=1 -I include .
     
