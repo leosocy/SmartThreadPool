@@ -80,8 +80,7 @@ template<class F, class... Args>
 class Task {
  public:
   using ReturnType = typename std::result_of<F(Args...)>::type;
-  Task(F&& f, Args&&... args)
-    : priority_(priority), thread_pool_id_(thread_pool_id) {
+  Task(F&& f, Args&&... args) {
     task_ = std::make_shared< std::packaged_task<ReturnType()> >(
         std::bind(std::forward<F>(f), std::forward<Args>(args)...));
   }

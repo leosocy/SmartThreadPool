@@ -32,5 +32,5 @@ cppcheck:
   image:
     name: ${DOCKER_REGISTRY}/cppcheck:1.83
   script:
-    - cppcheck -j 4 --enable=warning,performance --error-exitcode=1 smart_thread_pool.h
+    - cppcheck -j 4 --enable=warning,performance --error-exitcode=1 .
     

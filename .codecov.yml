@@ -10,7 +10,7 @@ coverage:
         paths: "tests/"
       app:
         target: 95%
-        paths: "./"
+        paths: "include/"
     patch:
       default: off
       tests:
@@ -18,7 +18,7 @@ coverage:
         paths: "tests/"
       app:
         target: 98%
-        paths: "./"
+        paths: "include/"
 
 codecov:
   branch: master

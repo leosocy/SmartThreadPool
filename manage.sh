@@ -61,7 +61,7 @@ cpplint() {
     docker run -it --rm --name ${CPP_LINT_CONTAINER_NAME} \
         -v ${CurDir}:/home/stp -w /home/stp \
         ${CPP_LINT_IMAGE} sh -c " \
-            cpplint --linelength=120 smart_thread_pool.h
+            cpplint --linelength=120 include/smart_thread_pool.h
         "
 }
 
