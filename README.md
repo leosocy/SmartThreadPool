@@ -17,7 +17,7 @@
 - Monitor Thread
 - Worker Threads
 
-![SmartThreadPoolFramework.jpg](https://i.loli.net/2018/07/30/5b5deaa11bb00.jpg)
+![SmartThreadPoolFramework](https://user-images.githubusercontent.com/19223292/43381776-53eb356e-9408-11e8-8c2e-7177029fd9d1.jpeg)
 
 ## Usage
 
