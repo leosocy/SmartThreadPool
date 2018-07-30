@@ -26,4 +26,15 @@
 
 int main(int argc, char** argv) {
 
+  // ******************How to init `SmartThreadPool`********************
+  // SmartThreadPoolBuilder.BuildFromConfig(const char* config_file).BuildAndInit();
+  // filename maybe: 1. *.yml   2. *.yaml   3. *.json   
+
+  // SmartThreadPoolBuilder.AddClassifyPool(const char* pool_name, uint8_t capacity, uint8_t init_size).AddTaskQueue(const char* queue_name, TaskQueuePriority priority)
+  // ******** Such as:
+  // SmartThreadPoolBuilder.AddClassifyPool("DefaultPool", 16, 4).AddTaskQueue("DefaultQueue", TaskQueuePriority::DEFAULT)
+  //                       .AddClassifyPool("CPUBoundPool", 8, 4).AddTaskQueue("UrgentQueue", TaskQueuePriority::Urgent).AddTaskQueue("MediumQueue", TaskQueuePriority::Medium)
+  //                       .AddClassifyPool("IOBoundPool", 16, 8).AddTaskQueue("DefaultQueue", TaskQueuePriority::DEFAULT)
+  //                       .BuildAndInit();
+
 }
