@@ -27,6 +27,7 @@
 
 #include <cstdint>
 #include <queue>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <functional>
@@ -52,7 +53,7 @@ namespace stp {
 
 // class SmartThreadPool;
 
-// class ClassifyThreadPool;
+class ClassifyThreadPool;
 // class Worker;
 
 // Tasks in the `TaskQueue` have the same priority.
@@ -64,17 +65,22 @@ namespace stp {
 // Therefore, in order to enable the `Dispather` to efficiently dispatch tasks,
 // it is necessary to put tasks into the queue according to priority.
 class TaskQueue;
-
-// class Dispatcher;
+class TaskDispatcher;
 // class Monitor;
 
-enum TaskPriority {
+enum TaskQueuePriority : unsigned char {
   DEFAULT = 0,
   LOW,
   MEDIUM,
   HIGH,
   URGENT,
 };
+namespace {
+
+unsigned char TaskQueuePriorityEnumSize = TaskQueuePriority::URGENT;
+uint8_t g_auto_increment_thread_pool_id = 0;
+
+}   // namespace
 
 template<class F, class... Args>
 class Task {
@@ -97,8 +103,8 @@ class TaskQueue {
  public:
   using FuctionType = std::function<void()>;
   using QueueType = std::queue<FuctionType>;
-  TaskQueue(TaskPriority priority = TaskPriority::DEFAULT, uint8_t thread_pool_id = 0)
-    : priority_(priority), thread_pool_id_(thread_pool_id), alive_(true) {
+  TaskQueue(const char* queue_name, TaskQueuePriority priority = TaskQueuePriority::DEFAULT, uint8_t thread_pool_id = 0)
+    : queue_name_(queue_name), priority_(priority), thread_pool_id_(thread_pool_id), alive_(true) {
   }
   TaskQueue(TaskQueue&&) = delete;
   TaskQueue& operator=(TaskQueue&&) = delete;
@@ -110,10 +116,10 @@ class TaskQueue {
     alive_ = false;
     queue_cv_.notify_all();
     lock.unlock();
-    auto task = dequeue();
+    auto task = std::move(dequeue());
     while (task) {
-      (*task)();
-      task = dequeue();
+      task();
+      task = std::move(dequeue());
     }
   }
 
@@ -142,24 +148,62 @@ class TaskQueue {
     queue_cv_.notify_one();
     return task->task_->get_future();
   }
-  std::shared_ptr<FuctionType> dequeue() {
+  FuctionType dequeue() {
     std::unique_lock<std::mutex> lock(queue_mtx_);
     queue_cv_.wait(lock, [this]{ return !alive_ || !tasks_.empty(); });
     if (!alive_ && tasks_.empty()) {
       return nullptr;
     }
-    FuctionType task_func = std::move(tasks_.front());
+    auto task_func = std::move(tasks_.front());
     tasks_.pop();
-    return std::make_shared<FuctionType>(task_func);
+    return task_func;
   }
 
  private:
-  TaskPriority priority_;
+  std::string queue_name_;
+  TaskQueuePriority priority_;
   uint8_t thread_pool_id_;
   QueueType tasks_;
   mutable std::mutex queue_mtx_;
   mutable std::condition_variable queue_cv_;
   bool alive_;
+};
+
+class ClassifyThreadPool {
+ public:
+  ClassifyThreadPool(const char* name, uint16_t capacity, uint16_t init_size) 
+    : id_(++g_auto_increment_thread_pool_id), name_(name){
+    workers_.reserve(capacity);
+  }
+
+  ClassifyThreadPool(ClassifyThreadPool&&) = delete;
+  ClassifyThreadPool& operator=(ClassifyThreadPool&&) = delete;
+ private:
+  void AddQueue(const char* name, TaskQueuePriority priority) {
+    queues_.emplace(name, std::make_shared<TaskQueue>(name, priority, id_));
+  }
+  void Work() {
+
+  }
+  uint8_t id_;
+  std::string name_;
+  std::vector<std::thread> workers_;
+  std::map<std::string, std::shared_ptr<TaskQueue> > queues_;
+};
+
+class TaskDispatcher {
+ public:
+  static TaskDispatcher& instance() {
+    static std::shared_ptr<TaskDispatcher> inst{new TaskDispatcher};
+    return *inst.get();
+  }
+  TaskDispatcher(TaskDispatcher&&) = delete;
+  TaskDispatcher& operator=(TaskDispatcher&&) = delete;
+  TaskQueue::FuctionType NextTask(std::shared_ptr<ClassifyThreadPool> pool) {
+
+  }
+ private:
+  TaskDispatcher() {};
 };
 
 }   // namespace stp
