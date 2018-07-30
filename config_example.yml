@@ -1,0 +1,36 @@
+# SmartThreadPool Configuration Example
+
+Pools:
+  - name: DefaultPool
+    capacity: 8
+    initsize: 2
+    TaskQueues:
+      - name: DefaultQueue
+        priority: DEFAULT
+      - name: UrgentQueue
+        priority: URGENT
+      - name: MediumQueue
+        priority: MEDIUM
+  - name: IOBoundPool
+    capacity: 16
+    initsize: 8
+    TaskQueues:
+      - name: UrgentQueue
+        priority: URGENT
+      - name: LowQueue
+        priority: LOW
+  - name: CPUBoundPool
+      capacity: 8
+      initsize: 4
+      TaskQueues:
+        - name: UrgentQueue
+          priority: URGENT
+        - name: HighQueue
+          priority: HIGH
+        - name: MediumQueue
+          priority: MEDIUM
+        - name: LowQueue
+          priority: LOW
+        - name: DefaultQueue
+          priority: DEFAULT
+    
