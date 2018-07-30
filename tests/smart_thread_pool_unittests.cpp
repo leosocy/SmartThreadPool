@@ -24,12 +24,13 @@
 
 #include "smart_thread_pool.h"
 #include "gtest/gtest.h"
+#include <vector>
 #include <thread>
 #include <chrono>
 
 namespace {
 
-using stp::TaskPriority;
+using stp::TaskQueuePriority;
 using stp::TaskQueue;
 
 class TaskQueueTestFixture : public testing::Test {
@@ -39,7 +40,10 @@ class TaskQueueTestFixture : public testing::Test {
   TaskQueue medium_queue_;
   TaskQueue high_queue_;
   TaskQueue urgent_queue_;
-  TaskQueueTestFixture() {}
+  TaskQueueTestFixture()
+    : default_queue_("DefaultQueue"), low_queue_("LowQueue"),
+      medium_queue_("MediumQueue"), high_queue_("HighQueue"), urgent_queue_("UrgentQueue") {
+  }
   virtual void SetUp() {
   }
   virtual void TearDown() {
@@ -73,7 +77,7 @@ TEST_F(TaskQueueTestFixture, test_multithread_consume_task_but_no_task) {
   auto entry = [this](){
     auto task = low_queue_.dequeue();
     if (task) {
-      (*task)();
+      task();
     }
   };
   auto clear_queue_entry = [this]() {
@@ -106,7 +110,7 @@ TEST_F(TaskQueueTestFixture, test_multithread_run_task) {
     auto res = medium_queue_.enqueue(task_func, count);
     auto task = medium_queue_.dequeue();
     if (task) {
-      (*task)();
+      task();
     }
     EXPECT_EQ(res.get(), count);
   };
@@ -120,6 +124,39 @@ TEST_F(TaskQueueTestFixture, test_multithread_run_task) {
 
   EXPECT_EQ(run_count, 16);
   EXPECT_EQ(medium_queue_.size(), 0);
+}
+
+TEST_F(TaskQueueTestFixture, pressure_test_multithread_operate_queue) {
+  auto func = [this](int count){
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    if (count == 9999) {
+      high_queue_.ClearQueue();
+    } 
+  };
+  auto enqueue_entry = [this, func]() {
+    for (int i = 0; i < 100000; ++i) {
+      high_queue_.enqueue(func, i);
+    }
+  };
+  auto handle_entry = [this]() {
+    auto task = high_queue_.dequeue();
+    while (task) {
+      task();
+      task = high_queue_.dequeue();
+    }
+  };
+  std::vector<std::thread> tv;
+  tv.emplace_back(enqueue_entry);
+  for (int i = 0; i < 128; ++i) {
+    tv.emplace_back(handle_entry);
+  }
+  auto start = std::chrono::steady_clock::now();
+  for (auto&& t : tv) {
+    t.join();
+  }
+  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+  EXPECT_LT(duration.count(), 1500);
+  EXPECT_EQ(high_queue_.size(), 0);
 }
 
 }   // namespace
