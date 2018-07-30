@@ -126,7 +126,8 @@ class TaskQueue {
     return tasks_.size();
   }
   template<class F, class... Args>
-  auto enqueue(F&& f, Args&&... args) -> std::future<decltype(f(args...))> {
+  auto enqueue(F&& f, Args&&... args) 
+      -> std::future<typename std::result_of<F(Args...)>::type> {
     std::unique_lock<std::mutex> lock(queue_mtx_);
     // Don't use smart pointer here, because it will destruct when `enqueue` function exit.
     // And the lambda will be Dangling references.
