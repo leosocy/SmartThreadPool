@@ -26,6 +26,7 @@
 #define SMART_THREAD_POOL_H_
 
 #include <cstdint>
+#include <string>
 #include <queue>
 #include <map>
 #include <memory>
@@ -51,10 +52,12 @@ namespace stp {
  * 
 */
 
-// class SmartThreadPool;
 
+
+
+
+class SmartThreadPool;
 class ClassifyThreadPool;
-// class Worker;
 
 // Tasks in the `TaskQueue` have the same priority.
 // Why not push all different priority tasks in a priority_queue?
@@ -169,6 +172,41 @@ class TaskQueue {
   bool alive_;
 };
 
+class TaskDispatcher {
+ public:
+  static TaskDispatcher& instance() {
+    static std::shared_ptr<TaskDispatcher> inst{new TaskDispatcher};
+    return *inst.get();
+  }
+  TaskDispatcher(TaskDispatcher&&) = delete;
+  TaskDispatcher& operator=(TaskDispatcher&&) = delete;
+  void RegistTaskQueue(uint8_t pool_id, const char* queue_name, TaskQueuePriority priority) {
+    while(pqs_.size() <= pool_id) {
+      pqs_.emplace_back();
+    }
+    if (pqs_.at(pool_id).empty()) {
+      InitQueuesInPool(pool_id);
+    }
+    pqs_.at(pool_id).at(priority) = std::make_shared<TaskQueue>(queue_name, priority, pool_id);
+  }
+
+  TaskQueue::FuctionType NextTask(std::shared_ptr<ClassifyThreadPool> pool) {
+  }
+ private:
+  using TaskQueues = std::vector< std::shared_ptr<TaskQueue> >;
+  TaskDispatcher() {
+    pqs_.reserve(UINT8_MAX);
+  }
+  void InitQueuesInPool(uint8_t pool_id) {
+    TaskQueues queues;
+    for (unsigned char i = 0; i < TaskQueuePriorityEnumSize; ++i) {
+      queues.emplace_back(nullptr);
+    }
+    pqs_.emplace_back(std::move(queues));
+  }
+  std::vector<TaskQueues> pqs_; // queue in pools.
+};
+
 class ClassifyThreadPool {
  public:
   ClassifyThreadPool(const char* name, uint16_t capacity, uint16_t init_size) 
@@ -180,7 +218,7 @@ class ClassifyThreadPool {
   ClassifyThreadPool& operator=(ClassifyThreadPool&&) = delete;
  private:
   void AddQueue(const char* name, TaskQueuePriority priority) {
-    queues_.emplace(name, std::make_shared<TaskQueue>(name, priority, id_));
+    TaskDispatcher::instance().RegistTaskQueue(id_, name, priority);
   }
   void Work() {
 
@@ -188,22 +226,38 @@ class ClassifyThreadPool {
   uint8_t id_;
   std::string name_;
   std::vector<std::thread> workers_;
-  std::map<std::string, std::shared_ptr<TaskQueue> > queues_;
+  std::shared_ptr<TaskDispatcher> dispatcher_; 
 };
 
-class TaskDispatcher {
+class SmartThreadPool {
  public:
-  static TaskDispatcher& instance() {
-    static std::shared_ptr<TaskDispatcher> inst{new TaskDispatcher};
-    return *inst.get();
+  SmartThreadPool(SmartThreadPool&&) = delete;
+  SmartThreadPool& operator=(SmartThreadPool&&) = delete;
+ private:
+  friend class SmartThreadPoolBuilder;
+  SmartThreadPool() {
+    pools_.reserve(UINT8_MAX);
   }
-  TaskDispatcher(TaskDispatcher&&) = delete;
-  TaskDispatcher& operator=(TaskDispatcher&&) = delete;
-  TaskQueue::FuctionType NextTask(std::shared_ptr<ClassifyThreadPool> pool) {
+  std::vector< std::unique_ptr<ClassifyThreadPool> > pools_;
+};
 
+class SmartThreadPoolBuilder {
+ public:
+  SmartThreadPoolBuilder()
+    : smart_pool_(new SmartThreadPool) {
+  }
+  SmartThreadPoolBuilder(SmartThreadPoolBuilder&&) = delete;
+  SmartThreadPoolBuilder& operator=(SmartThreadPoolBuilder&&) = delete;
+
+  SmartThreadPoolBuilder& AddClassifyPool(const char* pool_name, uint8_t capacity, uint8_t init_size) {
+    smart_pool_->pools_.emplace_back(new ClassifyThreadPool(pool_name, capacity, init_size));
+    return *this;
+  }
+  SmartThreadPoolBuilder& JoinTaskQueue(const char* queue_name, TaskQueuePriority priority) {
+    return *this;
   }
  private:
-  TaskDispatcher() {};
+  std::unique_ptr<SmartThreadPool> smart_pool_;
 };
 
 }   // namespace stp
