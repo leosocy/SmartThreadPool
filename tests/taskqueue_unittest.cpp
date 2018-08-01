@@ -1,5 +1,5 @@
 /****************************************************************************\
- * Created on Sun Jul 29 2018
+ * Created on Wed Aug 01 2018
  * 
  * The MIT License (MIT)
  * Copyright (c) 2018 leosocy
@@ -35,11 +35,6 @@ using stp::TaskQueue;
 
 class TaskQueueTestFixture : public testing::Test {
  protected:
-  TaskQueue default_queue_;
-  TaskQueue low_queue_;
-  TaskQueue medium_queue_;
-  TaskQueue high_queue_;
-  TaskQueue urgent_queue_;
   TaskQueueTestFixture()
     : default_queue_("DefaultQueue"), low_queue_("LowQueue"),
       medium_queue_("MediumQueue"), high_queue_("HighQueue"), urgent_queue_("UrgentQueue") {
@@ -48,7 +43,19 @@ class TaskQueueTestFixture : public testing::Test {
   }
   virtual void TearDown() {
     default_queue_.ClearQueue();
+    tv_.clear();
   }
+  void RunAllThreads() {
+    for (auto&& t : tv_) {
+      t.join();
+    }
+  }
+  TaskQueue default_queue_;
+  TaskQueue low_queue_;
+  TaskQueue medium_queue_;
+  TaskQueue high_queue_;
+  TaskQueue urgent_queue_;
+  std::vector<std::thread> tv_;
 };
 
 TEST_F(TaskQueueTestFixture, test_multithread_produce_task_but_no_worker_consume) {
@@ -56,13 +63,10 @@ TEST_F(TaskQueueTestFixture, test_multithread_produce_task_but_no_worker_consume
   auto entry = [this, task_func](){
     auto res = default_queue_.enqueue(task_func);
   };
-  std::thread ts[16];
   for (int i = 0; i < 16; ++i) {
-    ts[i] = std::thread(entry);
+    tv_.emplace_back(entry);
   }
-  for (int i = 0; i < 16; ++i) {
-    ts[i].join();
-  }
+  RunAllThreads();
   
   EXPECT_EQ(default_queue_.size(), 16);
 }
@@ -80,24 +84,19 @@ TEST_F(TaskQueueTestFixture, test_multithread_consume_task_but_no_task) {
       task();
     }
   };
-  auto clear_queue_entry = [this]() {
-    low_queue_.ClearQueue();
-  };
-  std::thread ts[16];
+  auto clear_queue_entry = [this]() { low_queue_.ClearQueue(); };
   for (int i = 0; i < 15; ++i) {
-    ts[i] = std::thread(entry);
+    tv_.emplace_back(entry);
   }
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
-  ts[15] = std::thread(clear_queue_entry);
-  for (int i = 0; i < 16; ++i) {
-    ts[i].join();
-  }
+  tv_.emplace_back(clear_queue_entry);
+  RunAllThreads();
 
   EXPECT_EQ(run_count, 0);
   EXPECT_EQ(low_queue_.size(), 0);
 }
 
-TEST_F(TaskQueueTestFixture, test_multithread_run_task) {
+TEST_F(TaskQueueTestFixture, test_multithread_produce_and_consume_tasks) {
   std::mutex mtx;
   int run_count = 0;
   auto task_func = [&run_count, &mtx](int count) {
@@ -116,47 +115,12 @@ TEST_F(TaskQueueTestFixture, test_multithread_run_task) {
   };
   std::thread ts[16];
   for (int i = 0; i < 16; ++i) {
-    ts[i] = std::thread(entry, i);
+    tv_.emplace_back(entry, i);
   }
-  for (int i = 0; i < 16; ++i) {
-    ts[i].join();
-  }
+  RunAllThreads();
 
   EXPECT_EQ(run_count, 16);
   EXPECT_EQ(medium_queue_.size(), 0);
-}
-
-TEST_F(TaskQueueTestFixture, pressure_test_multithread_operate_queue) {
-  auto func = [this](int count){
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    if (count == 9999) {
-      high_queue_.ClearQueue();
-    } 
-  };
-  auto enqueue_entry = [this, func]() {
-    for (int i = 0; i < 100000; ++i) {
-      high_queue_.enqueue(func, i);
-    }
-  };
-  auto handle_entry = [this]() {
-    auto task = high_queue_.dequeue();
-    while (task) {
-      task();
-      task = high_queue_.dequeue();
-    }
-  };
-  std::vector<std::thread> tv;
-  tv.emplace_back(enqueue_entry);
-  for (int i = 0; i < 128; ++i) {
-    tv.emplace_back(handle_entry);
-  }
-  auto start = std::chrono::steady_clock::now();
-  for (auto&& t : tv) {
-    t.join();
-  }
-  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
-  EXPECT_LT(duration.count(), 1500);
-  EXPECT_EQ(high_queue_.size(), 0);
 }
 
 }   // namespace

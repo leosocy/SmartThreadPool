@@ -78,29 +78,13 @@ enum TaskQueuePriority : unsigned char {
   HIGH,
   URGENT,
 };
+
 namespace {
 
 unsigned char TaskQueuePriorityEnumSize = TaskQueuePriority::URGENT;
 uint8_t g_auto_increment_thread_pool_id = 0;
 
 }   // namespace
-
-template<class F, class... Args>
-class Task {
- public:
-  using ReturnType = typename std::result_of<F(Args...)>::type;
-  Task(F&& f, Args&&... args)
-    : task_(std::make_shared< std::packaged_task<ReturnType()> >(
-        std::bind(std::forward<F>(f), std::forward<Args>(args)...))) {
-  }
-  void Run() { (*task_)(); }
-
-  Task(Task&&) = delete;
-  Task& operator=(Task&&) = delete;
- private:
-  friend class TaskQueue;
-  std::shared_ptr< std::packaged_task<ReturnType()> > task_;
-};
 
 class TaskQueue {
  public:
@@ -125,7 +109,6 @@ class TaskQueue {
       task = std::move(dequeue());
     }
   }
-
   bool empty() const {
     std::unique_lock<std::mutex> lock(queue_mtx_);
     return tasks_.empty();
@@ -135,21 +118,18 @@ class TaskQueue {
     return tasks_.size();
   }
   template<class F, class... Args>
-  auto enqueue(F&& f, Args&&... args) 
-      -> std::future<typename std::result_of<F(Args...)>::type> {
+  auto enqueue(F&& f, Args&&... args) -> std::future<typename std::result_of<F(Args...)>::type> {
     std::unique_lock<std::mutex> lock(queue_mtx_);
-    // Don't use smart pointer here, because it will destruct when `enqueue` function exit.
-    // And the lambda will be Dangling references.
-    // So we alloc a task, and delete it when task run complete.
-    auto task = new Task<F, Args...>(f, args...);
+    using ReturnType = typename std::result_of<F(Args...)>::type;
+    auto task = std::make_shared< std::packaged_task<ReturnType()> >(
+      std::bind(std::forward<F>(f), std::forward<Args>(args)...));
     tasks_.emplace([this, task]() {
       if (alive_) {
-        task->Run();
+        (*task)();
       }
-      delete task;
     });
     queue_cv_.notify_one();
-    return task->task_->get_future();
+    return task->get_future();
   }
   FuctionType dequeue() {
     std::unique_lock<std::mutex> lock(queue_mtx_);
