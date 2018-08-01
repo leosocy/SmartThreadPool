@@ -55,6 +55,18 @@ gdbtest() {
         "
 }
 
+buildexample() {
+    docker stop ${STP_CONTAINER_NAME} 2>/dev/null
+    docker rm -v ${STP_CONTAINER_NAME} 2>/dev/null
+    docker run -it --rm --name ${STP_CONTAINER_NAME} \
+        -v ${CurDir}:/home/stp -w /home/stp \
+        ${STP_CI_IMAGE} sh -c " \
+            mkdir -p ${BUILD_DIR} && cd ${BUILD_DIR} \
+            && g++ ../example.cpp -I../include --std=c++11 -o example \
+            && ./example
+        "
+}
+
 cpplint() {
     docker stop ${CPP_LINT_CONTAINER_NAME} 2>/dev/null
     docker rm -v ${CPP_LINT_CONTAINER_NAME} 2>/dev/null
@@ -72,11 +84,13 @@ cpplint() {
 case "$1" in
     runtest) runtest ;;
     gdbtest) gdbtest ;;
+    buildexample) buildexample ;;
     cpplint) cpplint ;;
     updateimages) updateimages ;;
     *)
         echo "Usage:"
         echo "./manage.sh runtest|gdbtest"
+        echo "./manage.sh buildexample"
         echo "./manage.sh cpplint"
         echo "./manage.sh updateimages"
         exit 1

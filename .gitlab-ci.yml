@@ -33,4 +33,13 @@ cppcheck:
     name: ${DOCKER_REGISTRY}/cppcheck:1.83
   script:
     - cppcheck -j 4 --enable=warning,performance --error-exitcode=1 -I include example.cpp
+
+# -------------------- Build Example --------------------
+buildexample:
+  stage: tests_and_lints
+  image:
+    name: ${IMAGE}:ci
+  script:
+    - mkdir -p exmaple_build; cd exmaple_build
+    - g++ ../example.cpp -I../include --std=c++11 -o exmaple && ./example
     

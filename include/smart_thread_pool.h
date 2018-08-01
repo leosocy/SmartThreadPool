@@ -173,7 +173,8 @@ class TaskDispatcher {
                   F&& f, Args&&... args) -> std::future<typename std::result_of<F(Args...)>::type> {
     return pqs_.at(pool_id).at(priority)->enqueue(f, args...);
   }
-  TaskQueue::FuctionType NextTask(std::shared_ptr<ClassifyThreadPool> pool) {
+  TaskQueue::FuctionType NextTask(uint8_t pool_id) {
+    return pqs_.at(pool_id).at(0)->dequeue();
   }
  private:
   using TaskQueuesType = std::vector< std::unique_ptr<TaskQueue> >;
@@ -200,15 +201,9 @@ class ClassifyThreadPool {
   ClassifyThreadPool(ClassifyThreadPool&&) = delete;
   ClassifyThreadPool& operator=(ClassifyThreadPool&&) = delete;
  private:
-  void AddQueue(const char* name, TaskQueuePriority priority) {
-    dispatcher_->RegistTaskQueue(name, priority, id_);
-  }
+  friend class SmartThreadPool;
   void Work() {
-
-  }
-  template<class F, class... Args>
-  auto ApplyAsync(const char* pool_name, TaskQueuePriority priority,
-                  F&& f, Args&&... args) -> std::future<typename std::result_of<F(Args...)>::type> {
+    auto task = dispatcher_->NextTask(id_);
   }
   uint8_t id_;
   std::string name_;
@@ -248,6 +243,9 @@ class SmartThreadPoolBuilder {
     return *this;
   }
   SmartThreadPoolBuilder& JoinTaskQueue(const char* queue_name, TaskQueuePriority priority) {
+    return *this;
+  }
+  SmartThreadPoolBuilder& JoinTaskQueues(const std::vector< std::shared_ptr<TaskQueue> >& queues) {
     return *this;
   }
   std::unique_ptr<SmartThreadPool> BuildAndInit() {
