@@ -84,16 +84,19 @@ int main(int argc, char** argv) {
   builder.AddClassifyPool("DefaultPool", 8, 4)
             .JoinTaskQueue("DefaultQueue", TaskQueuePriority::DEFAULT)
          .AddClassifyPool("CPUBoundPool", 8, 4)
-            .JoinTaskQueue("UrgentQueue", TaskQueuePriority::URGENT)
-            .JoinTaskQueue("MediumQueue", TaskQueuePriority::MEDIUM)
-            .JoinTaskQueue("DefaultQueue", TaskQueuePriority::DEFAULT)
+            .JoinTaskQueues({
+              {"UrgentQueue", TaskQueuePriority::URGENT},
+              {"MediumQueue", TaskQueuePriority::MEDIUM},
+              {"DefaultQueue", TaskQueuePriority::DEFAULT},
+            })
          .AddClassifyPool("IOBoundPool", 16, 8)
             .JoinTaskQueue("HighQueue", TaskQueuePriority::HIGH)
             .JoinTaskQueue("LowQueue", TaskQueuePriority::LOW);
   auto pool = builder.BuildAndInit();
-  // pool->ApplyAsync("IOBoundPool", TaskQueuePriority::HIGH,
-  //                  [](){ std::this_thread::sleep_for(std::chrono::seconds(2)); });
-  // auto res = pool->ApplyAsync("CPUBoundPool", TaskQueuePriority::MEDIUM,
-  //                             [](){ return 1; });
-  // auto value = res.get();
+  pool->ApplyAsync("IOBoundPool", TaskQueuePriority::HIGH,
+                   [](){ std::this_thread::sleep_for(std::chrono::seconds(2)); });
+  auto res = pool->ApplyAsync("CPUBoundPool", TaskQueuePriority::MEDIUM,
+                              [](int count){ return count; }, 666);
+  auto value = res.get();
+  printf("value: %d\n", value);
 }

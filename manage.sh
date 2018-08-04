@@ -62,8 +62,21 @@ buildexample() {
         -v ${CurDir}:/home/stp -w /home/stp \
         ${STP_CI_IMAGE} sh -c " \
             mkdir -p ${BUILD_DIR} && cd ${BUILD_DIR} \
-            && g++ ../example.cpp -I../include --std=c++11 -o example \
+            && g++ ../example.cpp -I../include -std=c++11 -fno-elide-constructors -o example \
             && ./example
+        "
+}
+
+gdbexample() {
+    docker stop ${STP_CONTAINER_NAME} 2>/dev/null
+    docker rm -v ${STP_CONTAINER_NAME} 2>/dev/null
+    docker run -it --rm --name ${STP_CONTAINER_NAME} \
+        --cap-add=SYS_PTRACE --security-opt seccomp=unconfined \
+        -v ${CurDir}:/home/stp -w /home/stp \
+        ${STP_CI_IMAGE} sh -c " \
+            mkdir -p ${BUILD_DIR} && cd ${BUILD_DIR} \
+            && g++ ../example.cpp -I../include -std=c++11 -fno-elide-constructors -o example \
+            && gdb example
         "
 }
 
@@ -85,12 +98,13 @@ case "$1" in
     runtest) runtest ;;
     gdbtest) gdbtest ;;
     buildexample) buildexample ;;
+    gdbexample) gdbexample ;;
     cpplint) cpplint ;;
     updateimages) updateimages ;;
     *)
         echo "Usage:"
         echo "./manage.sh runtest|gdbtest"
-        echo "./manage.sh buildexample"
+        echo "./manage.sh buildexample|gdbexample"
         echo "./manage.sh cpplint"
         echo "./manage.sh updateimages"
         exit 1
