@@ -62,7 +62,8 @@ class Worker;
 
 class TaskPriorityQueue;
 class Task;
-// class Monitor;
+
+class Monitor;
 
 enum TaskPriority : unsigned char {
   DEFAULT = 0,
@@ -179,12 +180,12 @@ class Worker {
  public:
   enum State : unsigned char {
     IDLE = 0,
-    WORKING,
+    BUSY,
   };
   Worker(std::unique_ptr<TaskPriorityQueue>& queue)
     : completed_task_count_(0) {
     t_ = std::thread([&queue, this]() {
-      state_ = State::WORKING;
+      state_ = State::BUSY;
       while (true) {
         auto task = queue->dequeue();
         if (task) {
@@ -202,7 +203,7 @@ class Worker {
       t_.join();
     }
   }
-  State state() { return state_; }
+  State state() const { return state_; }
  private:
   std::thread t_;
   State state_;
@@ -227,12 +228,27 @@ class ClassifyThreadPool {
       AddWorker();
     }
   }
-  void StartWorkers() {
-    for (auto& worker : workers_) {
-      worker.Work();
-    }
-  }
   uint8_t id() const { return id_; }
+  uint16_t capacity() const { return capacity_; }
+  uint16_t WorkerCount() const { return workers_.size(); }
+  uint16_t IdleWorkerCount() const {
+    uint16_t count = 0;
+    for (auto& worker : workers_) {
+      if (worker.state() == Worker::State::IDLE) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+  uint16_t BusyWorkerCount() const {
+    uint16_t count = 0;
+    for (auto& worker : workers_) {
+      if (worker.state() == Worker::State::BUSY) {
+        count += 1;
+      }
+    }
+    return count;
+  }
   const std::unique_ptr<TaskPriorityQueue>& queue() const { return queue_; };
  private:
   friend class SmartThreadPool;
@@ -242,6 +258,11 @@ class ClassifyThreadPool {
   }
   void AddWorker() {
     workers_.emplace_back(queue_);
+  }
+  void StartWorkers() {
+    for (auto& worker : workers_) {
+      worker.Work();
+    }
   }
   uint8_t id_;
   std::string name_;
@@ -260,7 +281,12 @@ class SmartThreadPool {
   template<class F, class... Args>
   auto ApplyAsync(const char* pool_name, TaskPriority priority,
                   F&& f, Args&&... args) -> std::future<typename std::result_of<F(Args...)>::type> {
-    return pools_.at(pool_name)->queue_->enqueue(priority, f, args...);
+    auto& pool = pools_.at(pool_name);
+    if (pool->IdleWorkerCount() < 1
+        && pool->WorkerCount() < pool->capacity()) {
+      pool->AddWorker();
+    }
+    return pool->queue()->enqueue(priority, f, args...);
   }
   void StartAllWorkers() {
     for (auto&& pool : pools_) {
@@ -271,6 +297,35 @@ class SmartThreadPool {
   friend class SmartThreadPoolBuilder;
   SmartThreadPool() {}
   std::map<std::string, std::unique_ptr<ClassifyThreadPool> > pools_;
+};
+
+class Monitor {
+ public:
+  void StartMonitoring(const std::unique_ptr<SmartThreadPool>& pool,
+                       std::chrono::duration<int> period=std::chrono::minutes(5)) {
+    t_ = std::move(std::thread([&pool, period, this](){
+      while (true) {
+        std::this_thread::sleep_for(period);
+        printf("********************************\n");
+        printf("This is Monitor thread output\n");
+        printf("********************************\n");
+      }
+    }));
+    t_.detach();
+  }
+ private:
+  friend class SmartThreadPoolBuilder;
+  Monitor() {}
+  void MonitorClassifyPool(const std::unique_ptr<ClassifyThreadPool>& classify_pool) {
+    // | pool name | BusyWorkerCount | IdleWorkerCount | RunningTaskCount | CompletedTaskCount | WaitingTaskCount |
+  }
+  void MonitorWorker(const Worker& worker) {
+    // | id | state | CompletedTaskCount |
+  }
+  void MonitorTaskQueue(const std::unique_ptr<TaskPriorityQueue>& queue) {
+    // | priority | TotalTaskCount | RunningTaskCount | CompletedTaskCount | WaitingTaskCount |
+  }
+  std::thread t_;
 };
 
 class SmartThreadPoolBuilder {
@@ -291,6 +346,8 @@ class SmartThreadPoolBuilder {
     return *this;
   }
   std::unique_ptr<SmartThreadPool> BuildAndInit() {
+    auto monitor = new Monitor();
+    monitor->StartMonitoring(smart_pool_);
     return std::move(smart_pool_);
   }
  private:
