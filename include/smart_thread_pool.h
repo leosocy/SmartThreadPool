@@ -58,6 +58,8 @@ namespace stp {
 
 class SmartThreadPool;
 class ClassifyThreadPool;
+class Worker;
+
 class TaskPriorityQueue;
 class Task;
 // class Monitor;
@@ -175,10 +177,35 @@ class TaskPriorityQueue {
 
 class Worker {
  public:
-  void Work() {
-
+  enum State : unsigned char {
+    IDLE = 0,
+    WORKING,
+  };
+  Worker(std::unique_ptr<TaskPriorityQueue>& queue)
+    : completed_task_count_(0) {
+    t_ = std::thread([&queue, this]() {
+      state_ = State::WORKING;
+      while (true) {
+        auto task = queue->dequeue();
+        if (task) {
+          task->Run();
+          completed_task_count_ += 1;
+        } else {
+          state_ = State::IDLE;
+          return;
+        }
+      }
+    });
   }
+  void Work() {
+    if (t_.joinable()) {
+      t_.join();
+    }
+  }
+  State state() { return state_; }
  private:
+  std::thread t_;
+  State state_;
   uint64_t completed_task_count_;
 };
 
@@ -201,13 +228,12 @@ class ClassifyThreadPool {
     }
   }
   void StartWorkers() {
-    for (auto&& worker : workers_) {
-      if (worker.joinable()) {
-        worker.join();
-      }
+    for (auto& worker : workers_) {
+      worker.Work();
     }
   }
-  uint8_t id() { return id_; }
+  uint8_t id() const { return id_; }
+  const std::unique_ptr<TaskPriorityQueue>& queue() const { return queue_; };
  private:
   friend class SmartThreadPool;
   void ConnectTaskPriorityQueue() {
@@ -215,23 +241,12 @@ class ClassifyThreadPool {
     queue_ = std::unique_ptr<TaskPriorityQueue>{new TaskPriorityQueue(queue_name.c_str(), id_)};
   }
   void AddWorker() {
-    workers_.emplace_back(
-      [this]() {
-        while (true) {
-          auto task = queue_->dequeue();
-          if (task) {
-            task->Run();
-          } else {
-            return;
-          }
-        }
-      }
-    );
+    workers_.emplace_back(queue_);
   }
   uint8_t id_;
   std::string name_;
   uint16_t capacity_;
-  std::vector<std::thread> workers_;
+  std::vector<Worker> workers_;
   std::unique_ptr<TaskPriorityQueue> queue_;
 };
 
