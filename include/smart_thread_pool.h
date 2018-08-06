@@ -114,7 +114,8 @@ class Task {
 class TaskPriorityQueue {
  public:
   explicit TaskPriorityQueue(const char* queue_name, uint8_t thread_pool_id = 0)
-    : queue_name_(queue_name), thread_pool_id_(thread_pool_id), alive_(true) {
+    : queue_name_(queue_name), thread_pool_id_(thread_pool_id), alive_(true),
+      task_count_(0), waiting_task_count_(0) {
   }
   TaskPriorityQueue(TaskPriorityQueue&& other) = delete;
   TaskPriorityQueue(const TaskPriorityQueue&) = delete;
@@ -151,22 +152,28 @@ class TaskPriorityQueue {
     {
       std::unique_lock<std::mutex> lock(queue_mtx_);
       tasks_.emplace([task](){ (*task)(); }, priority);
+      task_count_  += 1;
+      waiting_task_count_ += 1;
     }
     queue_cv_.notify_one();
     return task->get_future();
   }
   std::unique_ptr<Task> dequeue() {
     std::unique_lock<std::mutex> lock(queue_mtx_);
-    queue_cv_.wait(lock, [this]{ return !alive_ || !tasks_.empty(); });
-    if (!alive_ && tasks_.empty()) {
+    bool status = queue_cv_.wait_for(lock, std::chrono::seconds(2), [this]{ return !alive_ || !tasks_.empty(); });
+    if (!status
+        || (!alive_ && tasks_.empty())) {
       return nullptr;
     }
     auto task = std::unique_ptr<Task>{new Task(std::move(tasks_.top()))};
     tasks_.pop();
+    waiting_task_count_ -= 1;
     return task;
   }
   const char* name() const { return queue_name_.c_str(); }
   uint8_t pool_id() const { return thread_pool_id_; }
+  uint64_t task_count() const { return task_count_; }
+  uint64_t waiting_task_count() const { return waiting_task_count_; }
 
  private:
   std::string queue_name_;
@@ -175,6 +182,9 @@ class TaskPriorityQueue {
   mutable std::mutex queue_mtx_;
   mutable std::condition_variable queue_cv_;
   std::atomic_bool alive_;
+
+  uint64_t task_count_;
+  uint64_t waiting_task_count_;
 };
 
 class Worker {
@@ -184,17 +194,16 @@ class Worker {
     BUSY,
   };
   explicit Worker(TaskPriorityQueue* queue)
-    : completed_task_count_(0) {
+    : state_(State::IDLE), completed_task_count_(0) {
     t_ = std::thread([queue, this]() {
-      state_ = State::BUSY;
       while (true) {
         auto task = queue->dequeue();
         if (task) {
+          state_ = State::BUSY;
           task->Run();
           completed_task_count_ += 1;
         } else {
           state_ = State::IDLE;
-          return;
         }
       }
     });
@@ -231,6 +240,7 @@ class ClassifyThreadPool {
     }
   }
   uint8_t id() const { return id_; }
+  const char* name() const { return name_.c_str(); }
   uint16_t capacity() const { return capacity_; }
   uint16_t WorkerCount() const { return workers_.size(); }
   uint16_t IdleWorkerCount() const {
@@ -299,20 +309,21 @@ class SmartThreadPool {
 
  private:
   friend class SmartThreadPoolBuilder;
+  friend class Monitor;
   SmartThreadPool() {}
   std::map<std::string, std::unique_ptr<ClassifyThreadPool> > pools_;
 };
 
 class Monitor {
  public:
-  void StartMonitoring(const SmartThreadPool* pool,
-                       std::chrono::duration<int> period = std::chrono::minutes(5)) {
-    t_ = std::move(std::thread([pool, period, this](){
+  void StartMonitoring(const SmartThreadPool& pool,
+                       std::chrono::duration<int> period = std::chrono::seconds(10)) {
+    t_ = std::move(std::thread([&pool, period, this](){
       while (true) {
         std::this_thread::sleep_for(period);
-        printf("********************************\n");
-        printf("This is Monitor thread output\n");
-        printf("********************************\n");
+        for (auto&& classify_pool : pool.pools_) {
+          MonitorClassifyPool(*classify_pool.second.get());
+        }
       }
     }));
     t_.detach();
@@ -321,14 +332,22 @@ class Monitor {
  private:
   friend class SmartThreadPoolBuilder;
   Monitor() {}
-  void MonitorClassifyPool(const ClassifyThreadPool* classify_pool) {
-    // | pool name | BusyWorkerCount | IdleWorkerCount | RunningTaskCount | CompletedTaskCount | WaitingTaskCount |
+  void MonitorClassifyPool(const ClassifyThreadPool& classify_pool) {
+    // | pool name [ BusyWorkerCount | IdleWorkerCount | TotalWorkerCount ] [ RuningTaskCount | CompletedTaskCount | WaitingTaskCount ]
+    uint64_t task_count = classify_pool.queue()->task_count();
+    uint64_t waiting_task_count = classify_pool.queue()->waiting_task_count();
+    uint64_t completed_task_count = task_count - waiting_task_count - classify_pool.BusyWorkerCount();
+    char msg[1024] = {0};
+    snprintf(msg, 1024, "~ ThreadPool:%s\n\tWorkers:[%u/%u/%u]\n\tTasks:[%u/%lu/%lu]\n",
+             classify_pool.name(), classify_pool.BusyWorkerCount(), classify_pool.IdleWorkerCount(), classify_pool.capacity(),
+             classify_pool.BusyWorkerCount(), completed_task_count, waiting_task_count);
+    printf("%s", msg);
   }
   void MonitorWorker(const Worker& worker) {
     // | id | state | CompletedTaskCount |
   }
-  void MonitorTaskQueue(const TaskPriorityQueue* queue) {
-    // | priority | TotalTaskCount | RunningTaskCount | CompletedTaskCount | WaitingTaskCount |
+  void MonitorTaskQueue(const TaskPriorityQueue& queue) {
+    // | priority | RunningTaskCount | CompletedTaskCount | WaitingTaskCount | TotalTaskCount | 
   }
   std::thread t_;
 };
@@ -352,7 +371,7 @@ class SmartThreadPoolBuilder {
   }
   std::unique_ptr<SmartThreadPool> BuildAndInit() {
     auto monitor = new Monitor();
-    monitor->StartMonitoring(smart_pool_.get());
+    monitor->StartMonitoring(*smart_pool_.get());
     return std::move(smart_pool_);
   }
 
