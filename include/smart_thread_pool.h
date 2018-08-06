@@ -26,9 +26,9 @@
 #define SMART_THREAD_POOL_H_
 
 #include <cstdint>
-#include <cassert>
 #include <string>
 #include <queue>
+#include <vector>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -73,11 +73,11 @@ enum TaskPriority : unsigned char {
   URGENT,
 };
 
-namespace {
+namespace detail {
 
 uint8_t g_auto_increment_thread_pool_id = 0;
 
-}   // namespace
+}   // namespace detail
 
 class Task {
  public:
@@ -105,6 +105,7 @@ class Task {
   void Run() {
     task_();
   }
+
  private:
   TaskType task_;
   TaskPriority priority_;
@@ -112,7 +113,7 @@ class Task {
 
 class TaskPriorityQueue {
  public:
-  TaskPriorityQueue(const char* queue_name, uint8_t thread_pool_id = 0)
+  explicit TaskPriorityQueue(const char* queue_name, uint8_t thread_pool_id = 0)
     : queue_name_(queue_name), thread_pool_id_(thread_pool_id), alive_(true) {
   }
   TaskPriorityQueue(TaskPriorityQueue&& other) = delete;
@@ -182,9 +183,9 @@ class Worker {
     IDLE = 0,
     BUSY,
   };
-  Worker(std::unique_ptr<TaskPriorityQueue>& queue)
+  explicit Worker(TaskPriorityQueue* queue)
     : completed_task_count_(0) {
-    t_ = std::thread([&queue, this]() {
+    t_ = std::thread([queue, this]() {
       state_ = State::BUSY;
       while (true) {
         auto task = queue->dequeue();
@@ -204,6 +205,7 @@ class Worker {
     }
   }
   State state() const { return state_; }
+
  private:
   std::thread t_;
   State state_;
@@ -212,8 +214,8 @@ class Worker {
 
 class ClassifyThreadPool {
  public:
-  ClassifyThreadPool(const char* name, uint16_t capacity) 
-    : id_(++g_auto_increment_thread_pool_id), name_(name), capacity_(capacity) {
+  ClassifyThreadPool(const char* name, uint16_t capacity)
+    : id_(++detail::g_auto_increment_thread_pool_id), name_(name), capacity_(capacity) {
     workers_.reserve(capacity);
     ConnectTaskPriorityQueue();
   }
@@ -249,7 +251,8 @@ class ClassifyThreadPool {
     }
     return count;
   }
-  const std::unique_ptr<TaskPriorityQueue>& queue() const { return queue_; };
+  const std::unique_ptr<TaskPriorityQueue>& queue() const { return queue_; }
+
  private:
   friend class SmartThreadPool;
   void ConnectTaskPriorityQueue() {
@@ -257,7 +260,7 @@ class ClassifyThreadPool {
     queue_ = std::unique_ptr<TaskPriorityQueue>{new TaskPriorityQueue(queue_name.c_str(), id_)};
   }
   void AddWorker() {
-    workers_.emplace_back(queue_);
+    workers_.emplace_back(queue_.get());
   }
   void StartWorkers() {
     for (auto& worker : workers_) {
@@ -293,6 +296,7 @@ class SmartThreadPool {
       pool.second->StartWorkers();
     }
   }
+
  private:
   friend class SmartThreadPoolBuilder;
   SmartThreadPool() {}
@@ -301,9 +305,9 @@ class SmartThreadPool {
 
 class Monitor {
  public:
-  void StartMonitoring(const std::unique_ptr<SmartThreadPool>& pool,
-                       std::chrono::duration<int> period=std::chrono::minutes(5)) {
-    t_ = std::move(std::thread([&pool, period, this](){
+  void StartMonitoring(const SmartThreadPool* pool,
+                       std::chrono::duration<int> period = std::chrono::minutes(5)) {
+    t_ = std::move(std::thread([pool, period, this](){
       while (true) {
         std::this_thread::sleep_for(period);
         printf("********************************\n");
@@ -313,16 +317,17 @@ class Monitor {
     }));
     t_.detach();
   }
+
  private:
   friend class SmartThreadPoolBuilder;
   Monitor() {}
-  void MonitorClassifyPool(const std::unique_ptr<ClassifyThreadPool>& classify_pool) {
+  void MonitorClassifyPool(const ClassifyThreadPool* classify_pool) {
     // | pool name | BusyWorkerCount | IdleWorkerCount | RunningTaskCount | CompletedTaskCount | WaitingTaskCount |
   }
   void MonitorWorker(const Worker& worker) {
     // | id | state | CompletedTaskCount |
   }
-  void MonitorTaskQueue(const std::unique_ptr<TaskPriorityQueue>& queue) {
+  void MonitorTaskQueue(const TaskPriorityQueue* queue) {
     // | priority | TotalTaskCount | RunningTaskCount | CompletedTaskCount | WaitingTaskCount |
   }
   std::thread t_;
@@ -330,7 +335,7 @@ class Monitor {
 
 class SmartThreadPoolBuilder {
  public:
-  SmartThreadPoolBuilder() 
+  SmartThreadPoolBuilder()
     : smart_pool_(new SmartThreadPool) {
   }
 
@@ -347,9 +352,10 @@ class SmartThreadPoolBuilder {
   }
   std::unique_ptr<SmartThreadPool> BuildAndInit() {
     auto monitor = new Monitor();
-    monitor->StartMonitoring(smart_pool_);
+    monitor->StartMonitoring(smart_pool_.get());
     return std::move(smart_pool_);
   }
+
  private:
   std::unique_ptr<SmartThreadPool> smart_pool_;
 };

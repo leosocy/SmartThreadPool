@@ -55,7 +55,7 @@ gdbtest() {
         "
 }
 
-buildexample() {
+runexample() {
     docker stop ${STP_CONTAINER_NAME} 2>/dev/null
     docker rm -v ${STP_CONTAINER_NAME} 2>/dev/null
     docker run -it --rm --name ${STP_CONTAINER_NAME} \
@@ -97,14 +97,14 @@ cpplint() {
 case "$1" in
     runtest) runtest ;;
     gdbtest) gdbtest ;;
-    buildexample) buildexample ;;
+    runexample) runexample ;;
     gdbexample) gdbexample ;;
     cpplint) cpplint ;;
     updateimages) updateimages ;;
     *)
         echo "Usage:"
-        echo "./manage.sh runtest|gdbtest"
-        echo "./manage.sh buildexample|gdbexample"
+        echo "./manage.sh runtest | gdbtest"
+        echo "./manage.sh runexample | gdbexample"
         echo "./manage.sh cpplint"
         echo "./manage.sh updateimages"
         exit 1
