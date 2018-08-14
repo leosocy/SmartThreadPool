@@ -63,6 +63,7 @@ class Worker;
 class TaskPriorityQueue;
 class Task;
 
+class Daemon;
 class Monitor;
 
 enum TaskPriority : unsigned char {
@@ -82,7 +83,7 @@ uint8_t g_auto_increment_thread_pool_id = 0;
 class Task {
  public:
   using TaskType = std::function<void()>;
-  Task(TaskType task, TaskPriority priority)
+  explicit Task(TaskType task, TaskPriority priority)
     : task_(task), priority_(priority) {
   }
   Task(const Task& other)
@@ -113,7 +114,7 @@ class Task {
 
 class TaskPriorityQueue {
  public:
-  explicit TaskPriorityQueue(const char* queue_name, uint8_t thread_pool_id = 0)
+  explicit TaskPriorityQueue(const char* queue_name, uint8_t thread_pool_id)
     : queue_name_(queue_name), thread_pool_id_(thread_pool_id), alive_(true),
       task_count_(0), waiting_task_count_(0) {
   }
@@ -160,9 +161,8 @@ class TaskPriorityQueue {
   }
   std::unique_ptr<Task> dequeue() {
     std::unique_lock<std::mutex> lock(queue_mtx_);
-    bool status = queue_cv_.wait_for(lock, std::chrono::seconds(2), [this]{ return !alive_ || !tasks_.empty(); });
-    if (!status
-        || (!alive_ && tasks_.empty())) {
+    bool status = queue_cv_.wait_for(lock, std::chrono::seconds(5), [this]{ return !alive_ || !tasks_.empty(); });
+    if (!status || (!alive_ && tasks_.empty())) {
       return nullptr;
     }
     auto task = std::unique_ptr<Task>{new Task(std::move(tasks_.top()))};
@@ -192,6 +192,7 @@ class Worker {
   enum State : unsigned char {
     IDLE = 0,
     BUSY,
+    EXITED,
   };
   explicit Worker(TaskPriorityQueue* queue)
     : state_(State::IDLE), completed_task_count_(0) {
@@ -203,7 +204,8 @@ class Worker {
           task->Run();
           completed_task_count_ += 1;
         } else {
-          state_ = State::IDLE;
+          state_ = State::EXITED;
+          return;
         }
       }
     });
@@ -214,6 +216,7 @@ class Worker {
     }
   }
   State state() const { return state_; }
+  uint64_t completed_task_count() { return completed_task_count_; }
 
  private:
   std::thread t_;
@@ -244,22 +247,13 @@ class ClassifyThreadPool {
   uint16_t capacity() const { return capacity_; }
   uint16_t WorkerCount() const { return workers_.size(); }
   uint16_t IdleWorkerCount() const {
-    uint16_t count = 0;
-    for (auto& worker : workers_) {
-      if (worker.state() == Worker::State::IDLE) {
-        count += 1;
-      }
-    }
-    return count;
+    return GetWorkerStateCount(Worker::State::IDLE);
   }
   uint16_t BusyWorkerCount() const {
-    uint16_t count = 0;
-    for (auto& worker : workers_) {
-      if (worker.state() == Worker::State::BUSY) {
-        count += 1;
-      }
-    }
-    return count;
+    return GetWorkerStateCount(Worker::State::BUSY);
+  }
+  uint16_t ExitedWorkerCount() const {
+    return GetWorkerStateCount(Worker::State::EXITED);
   }
   const std::unique_ptr<TaskPriorityQueue>& queue() const { return queue_; }
 
@@ -276,6 +270,15 @@ class ClassifyThreadPool {
     for (auto& worker : workers_) {
       worker.Work();
     }
+  }
+  uint16_t GetWorkerStateCount(Worker::State state) const {
+    uint16_t count = 0;
+    for (auto& worker : workers_) {
+      if (worker.state() == state) {
+        count += 1;
+      }
+    }
+    return count;
   }
   uint8_t id_;
   std::string name_;
@@ -295,11 +298,12 @@ class SmartThreadPool {
   auto ApplyAsync(const char* pool_name, TaskPriority priority,
                   F&& f, Args&&... args) -> std::future<typename std::result_of<F(Args...)>::type> {
     auto& pool = pools_.at(pool_name);
-    if (pool->IdleWorkerCount() < 1
+    auto res = pool->queue()->enqueue(priority, f, args...);
+    if (pool->queue()->size() >= pool->WorkerCount()
         && pool->WorkerCount() < pool->capacity()) {
       pool->AddWorker();
     }
-    return pool->queue()->enqueue(priority, f, args...);
+    return res;
   }
   void StartAllWorkers() {
     for (auto&& pool : pools_) {
@@ -333,17 +337,29 @@ class Monitor {
   friend class SmartThreadPoolBuilder;
   Monitor() {}
   void MonitorClassifyPool(const ClassifyThreadPool& classify_pool) {
-    // | pool name [ BusyWorkerCount | IdleWorkerCount | TotalWorkerCount ] [ RuningTaskCount | CompletedTaskCount | WaitingTaskCount ]
-    uint64_t task_count = classify_pool.queue()->task_count();
-    uint64_t waiting_task_count = classify_pool.queue()->waiting_task_count();
-    uint64_t completed_task_count = task_count - waiting_task_count - classify_pool.BusyWorkerCount();
-    char msg[1024] = {0};
-    snprintf(msg, 1024, "~ ThreadPool:%s\n\tWorkers:[%u/%u/%u]\n\tTasks:[%u/%lu/%lu]\n",
-             classify_pool.name(), classify_pool.BusyWorkerCount(), classify_pool.IdleWorkerCount(), classify_pool.capacity(),
-             classify_pool.BusyWorkerCount(), completed_task_count, waiting_task_count);
-    printf("%s", msg);
+    uint16_t busy_worker = classify_pool.BusyWorkerCount();
+    uint16_t idle_worker = classify_pool.IdleWorkerCount();
+    uint16_t exited_worker = classify_pool.ExitedWorkerCount();
+    uint16_t total_worker = classify_pool.capacity();
+    uint16_t assignable_worker = total_worker - classify_pool.WorkerCount();
+
+    uint64_t total_task = classify_pool.queue()->task_count();
+    uint64_t running_task = classify_pool.BusyWorkerCount();
+    uint64_t waiting_task = classify_pool.queue()->waiting_task_count();
+    uint64_t completed_task = total_task - running_task - waiting_task;
+  
+    char pool_msg[64];
+    char worker_msg[72];
+    char task_msg[72];
+    snprintf(pool_msg, 24, "~ ThreadPool:%s", classify_pool.name());
+    snprintf(worker_msg, 72, "Worker[Busy:%u, Idle:%u, Exited:%u, Assignable:%u, Total:%u]",
+             busy_worker, idle_worker, exited_worker, assignable_worker, total_worker);
+    snprintf(task_msg, 72, "Task[Running:%lu, Waiting:%lu, Completed:%lu, Total:%lu]",
+             running_task, waiting_task, completed_task, total_task);
+    printf("%-24s\t%-72s\t%-72s\n", pool_msg, worker_msg, task_msg);
   }
   void MonitorWorker(const Worker& worker) {
+
     // | id | state | CompletedTaskCount |
   }
   void MonitorTaskQueue(const TaskPriorityQueue& queue) {
