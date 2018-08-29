@@ -26,10 +26,15 @@
 #define SMART_THREAD_POOL_H_
 
 #include <cstdint>
+#include <ctime>
+#include <iostream>
+#include <iomanip>
 #include <string>
+#include <sstream>
 #include <queue>
 #include <vector>
 #include <map>
+#include <algorithm>
 #include <memory>
 #include <mutex>
 #include <functional>
@@ -39,19 +44,18 @@
 namespace stp {
 
 /*
- *                                                    
- *                              \ Workers .../                            |~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\
- *                      |-----ClassifyThreadPool ---->TaskPriorityQueue-->| UrgentTask HighTask MediumTask  \
- *                      |                                                 |~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\
+ *
+ *                              \ Workers .../                            |~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|
+ *                      |-----ClassifyThreadPool ---->TaskPriorityQueue-->| UrgentTask HighTask MediumTask  |
+ *                      |                                                 |~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|
  *                      |               
- * SmartThreadPool ---->|       \ Workers .../                            |~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\
- *                      |-----ClassifyThreadPool ---->TaskPriorityQueue-->| MediumTask LowTask DefaultTask  \
- *                      |                                                 |~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\
+ * SmartThreadPool ---->|       \ Workers .../                            |~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|
+ *                      |-----ClassifyThreadPool ---->TaskPriorityQueue-->| MediumTask LowTask DefaultTask  |
+ *                      |                                                 |~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|
  *                      |                              
- *                      |       \ Workers ... /                           |~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\
- *                      |-----ClassifyThreadPool ---->TaskPriorityQueue-->| UrgentTask LowTask DefaultTask  \
- *                                                                        |~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\
- * 
+ *                      |       \ Workers ... /                           |~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|
+ *                      |-----ClassifyThreadPool ---->TaskPriorityQueue-->| UrgentTask LowTask DefaultTask  |
+ *                                                                        |~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|
  *
 */
 
@@ -114,9 +118,8 @@ class Task {
 
 class TaskPriorityQueue {
  public:
-  explicit TaskPriorityQueue(const char* queue_name, uint8_t thread_pool_id)
-    : queue_name_(queue_name), thread_pool_id_(thread_pool_id), alive_(true),
-      task_count_(0), waiting_task_count_(0) {
+  explicit TaskPriorityQueue(const char* queue_name)
+    : queue_name_(queue_name), alive_(true), task_count_(0), waiting_task_count_(0) {
   }
   TaskPriorityQueue(TaskPriorityQueue&& other) = delete;
   TaskPriorityQueue(const TaskPriorityQueue&) = delete;
@@ -171,13 +174,11 @@ class TaskPriorityQueue {
     return task;
   }
   const char* name() const { return queue_name_.c_str(); }
-  uint8_t pool_id() const { return thread_pool_id_; }
   uint64_t task_count() const { return task_count_; }
   uint64_t waiting_task_count() const { return waiting_task_count_; }
 
  private:
   std::string queue_name_;
-  uint8_t thread_pool_id_;
   std::priority_queue<Task> tasks_;
   mutable std::mutex queue_mtx_;
   mutable std::condition_variable queue_cv_;
@@ -216,7 +217,7 @@ class Worker {
     }
   }
   State state() const { return state_; }
-  uint64_t completed_task_count() { return completed_task_count_; }
+  uint64_t completed_task_count() const { return completed_task_count_; }
 
  private:
   std::thread t_;
@@ -255,16 +256,17 @@ class ClassifyThreadPool {
   uint16_t ExitedWorkerCount() const {
     return GetWorkerStateCount(Worker::State::EXITED);
   }
-  const std::unique_ptr<TaskPriorityQueue>& queue() const { return queue_; }
+  const std::vector<Worker>& workers() const { return workers_; }
+  const std::unique_ptr<TaskPriorityQueue>& task_queue() const { return task_queue_; }
 
  private:
   friend class SmartThreadPool;
   void ConnectTaskPriorityQueue() {
     std::string queue_name = name_ + "-->TaskQueue";
-    queue_ = std::unique_ptr<TaskPriorityQueue>{new TaskPriorityQueue(queue_name.c_str(), id_)};
+    task_queue_ = std::unique_ptr<TaskPriorityQueue>{new TaskPriorityQueue(queue_name.c_str())};
   }
   void AddWorker() {
-    workers_.emplace_back(queue_.get());
+    workers_.emplace_back(task_queue_.get());
   }
   void StartWorkers() {
     for (auto& worker : workers_) {
@@ -284,7 +286,7 @@ class ClassifyThreadPool {
   std::string name_;
   uint16_t capacity_;
   std::vector<Worker> workers_;
-  std::unique_ptr<TaskPriorityQueue> queue_;
+  std::unique_ptr<TaskPriorityQueue> task_queue_;
 };
 
 class SmartThreadPool {
@@ -298,8 +300,8 @@ class SmartThreadPool {
   auto ApplyAsync(const char* pool_name, TaskPriority priority,
                   F&& f, Args&&... args) -> std::future<typename std::result_of<F(Args...)>::type> {
     auto& pool = pools_.at(pool_name);
-    auto res = pool->queue()->enqueue(priority, f, args...);
-    if (pool->queue()->size() >= pool->WorkerCount()
+    auto res = pool->task_queue()->enqueue(priority, f, args...);
+    if (pool->task_queue()->size() >= pool->WorkerCount()
         && pool->WorkerCount() < pool->capacity()) {
       pool->AddWorker();
     }
@@ -320,16 +322,50 @@ class SmartThreadPool {
 
 class Monitor {
  public:
-  void StartMonitoring(const SmartThreadPool& pool,
-                       std::chrono::duration<int> period = std::chrono::seconds(10)) {
-    t_ = std::move(std::thread([&pool, period, this](){
+  void StartMonitoring(const SmartThreadPool& pool, const std::chrono::duration<int>& monitor_second_period) {
+    t_ = std::move(std::thread([&pool, &monitor_second_period, this](){
       while (true) {
-        std::this_thread::sleep_for(period);
-        for (auto&& classify_pool : pool.pools_) {
-          MonitorClassifyPool(*classify_pool.second.get());
+        std::this_thread::sleep_for(monitor_second_period);
+        for (auto&& pool_map : pool.pools_) {
+          auto& classify_pool = *pool_map.second.get();
+          MonitorClassifyPool(classify_pool);
         }
+
+        char now[128];
+        std::time_t t = std::time(NULL);
+        std::strftime(now, sizeof(now), "%F %T", std::localtime(&t));
+        std::string now_str(now);
+
+        std::stringstream monitor_log;
+        auto cmp = [](const std::string& s1, const std::string& s2) { return s1.size() < s2.size(); };
+        size_t max_row_msg_length = 0;
+
+        for (size_t i = 0; i < pool_msgs_.size(); ++i) {
+          int max_pool_msg_length = std::max_element(pool_msgs_.begin(), pool_msgs_.end(), cmp)->length();
+          int max_workers_msg_length = std::max_element(workers_msgs_.begin(), workers_msgs_.end(), cmp)->length();
+          max_pool_msg_length += 4;
+          max_workers_msg_length += 4;
+          std::stringstream row_log;
+          row_log << std::left << std::setw(max_pool_msg_length) << pool_msgs_.at(i)
+                  << std::left << std::setw(max_workers_msg_length) << workers_msgs_.at(i)
+                  << std::left << tasks_msgs_.at(i) << std::endl;
+          if (row_log.str().length() > max_row_msg_length) {
+            max_row_msg_length = row_log.str().length();
+          }
+          monitor_log << row_log.str();
+        }
+        
+        int head_front_length = (max_row_msg_length - now_str.length()) / 2;
+        int head_back_length = max_row_msg_length - now_str.length() - head_front_length;
+        std::cout << "/" << std::setfill('-') << std::setw(head_front_length) << "" << now << std::setfill('-') << std::setw(head_back_length - 1) << "\\" << std::endl;
+        std::cout << monitor_log.str();
+        std::cout << "\\" << std::setfill('-') << std::setw(max_row_msg_length - 1) << "/" << std::endl;
+        pool_msgs_.clear();
+        workers_msgs_.clear();
+        tasks_msgs_.clear();
       }
     }));
+
     t_.detach();
   }
 
@@ -343,35 +379,35 @@ class Monitor {
     uint16_t total_worker = classify_pool.capacity();
     uint16_t assignable_worker = total_worker - classify_pool.WorkerCount();
 
-    uint64_t total_task = classify_pool.queue()->task_count();
+    uint64_t total_task = classify_pool.task_queue()->task_count();
     uint64_t running_task = classify_pool.BusyWorkerCount();
-    uint64_t waiting_task = classify_pool.queue()->waiting_task_count();
+    uint64_t waiting_task = classify_pool.task_queue()->waiting_task_count();
     uint64_t completed_task = total_task - running_task - waiting_task;
   
-    char pool_msg[64];
-    char worker_msg[72];
-    char task_msg[72];
-    snprintf(pool_msg, 24, "~ ThreadPool:%s", classify_pool.name());
-    snprintf(worker_msg, 72, "Worker[Busy:%u, Idle:%u, Exited:%u, Assignable:%u, Total:%u]",
+    char pool_msg[256];
+    char workers_msg[256];
+    char tasks_msg[256];
+    snprintf(pool_msg, 256, " ~ ThreadPool:%s", classify_pool.name());
+    snprintf(workers_msg, 256, "Workers[Busy:%u, Idle:%u, Exited:%u, Assignable:%u, Total:%u]",
              busy_worker, idle_worker, exited_worker, assignable_worker, total_worker);
-    snprintf(task_msg, 72, "Task[Running:%lu, Waiting:%lu, Completed:%lu, Total:%lu]",
+    snprintf(tasks_msg, 256, "Tasks[Running:%lu, Waiting:%lu, Completed:%lu, Total:%lu]",
              running_task, waiting_task, completed_task, total_task);
-    printf("%-24s\t%-72s\t%-72s\n", pool_msg, worker_msg, task_msg);
-  }
-  void MonitorWorker(const Worker& worker) {
 
-    // | id | state | CompletedTaskCount |
+    pool_msgs_.emplace_back(pool_msg);
+    workers_msgs_.emplace_back(workers_msg);
+    tasks_msgs_.emplace_back(tasks_msg);
   }
-  void MonitorTaskQueue(const TaskPriorityQueue& queue) {
-    // | priority | RunningTaskCount | CompletedTaskCount | WaitingTaskCount | TotalTaskCount | 
-  }
+
   std::thread t_;
+  std::vector<std::string> pool_msgs_;
+  std::vector<std::string> workers_msgs_;
+  std::vector<std::string> tasks_msgs_;
 };
 
 class SmartThreadPoolBuilder {
  public:
   SmartThreadPoolBuilder()
-    : smart_pool_(new SmartThreadPool) {
+    : smart_pool_(new SmartThreadPool), enable_monitor_(false) {
   }
 
   SmartThreadPoolBuilder(SmartThreadPoolBuilder&&) = delete;
@@ -385,14 +421,23 @@ class SmartThreadPoolBuilder {
     smart_pool_->pools_.emplace(pool_name, pool);
     return *this;
   }
+  SmartThreadPoolBuilder& EnableMonitor(const std::chrono::duration<int>& second_period = std::chrono::seconds(60)) { 
+    enable_monitor_ = true;
+    monitor_second_period_ = second_period;
+    return *this;
+  }
   std::unique_ptr<SmartThreadPool> BuildAndInit() {
-    auto monitor = new Monitor();
-    monitor->StartMonitoring(*smart_pool_.get());
+    if (enable_monitor_) {
+      auto monitor = new Monitor();
+      monitor->StartMonitoring(*smart_pool_.get(), monitor_second_period_);
+    }
     return std::move(smart_pool_);
   }
 
  private:
   std::unique_ptr<SmartThreadPool> smart_pool_;
+  bool enable_monitor_;
+  std::chrono::duration<int> monitor_second_period_;
 };
 
 }   // namespace stp

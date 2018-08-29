@@ -57,7 +57,7 @@ int main(int argc, char** argv) {
   //
   // ***********************************************************************
 
-  // ********************How to join a task********************
+  // ******************************How to join a task******************************
   //
   // pool->ApplyAsync(function, args...);
   // ******** Such as:
@@ -77,14 +77,15 @@ int main(int argc, char** argv) {
   //   std::cout << "Timeout" << std::endl;
   // }
   //
-  // **********************************************************
+  // *******************************************************************************
 
   using stp::SmartThreadPoolBuilder;
   using stp::TaskPriority;
   SmartThreadPoolBuilder builder;
   builder.AddClassifyPool("DefaultPool", 8, 4)
          .AddClassifyPool("CPUBoundPool", 8, 4)
-         .AddClassifyPool("IOBoundPool", 64, 32);
+         .AddClassifyPool("IOBoundPool", 64, 32)
+         .EnableMonitor(std::chrono::seconds(5));
   auto pool = builder.BuildAndInit();
   
   for (int i = 0; i < 64; ++i) {
