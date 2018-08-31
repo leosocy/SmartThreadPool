@@ -343,8 +343,8 @@ class Monitor {
         for (size_t i = 0; i < pool_msgs_.size(); ++i) {
           int max_pool_msg_length = std::max_element(pool_msgs_.begin(), pool_msgs_.end(), cmp)->length();
           int max_workers_msg_length = std::max_element(workers_msgs_.begin(), workers_msgs_.end(), cmp)->length();
-          max_pool_msg_length += 4;
-          max_workers_msg_length += 4;
+          max_pool_msg_length += 2;
+          max_workers_msg_length += 2;
           std::stringstream row_log;
           row_log << std::left << std::setw(max_pool_msg_length) << pool_msgs_.at(i)
                   << std::left << std::setw(max_workers_msg_length) << workers_msgs_.at(i)
@@ -354,12 +354,17 @@ class Monitor {
           }
           monitor_log << row_log.str();
         }
-        
+
         int head_front_length = (max_row_msg_length - now_str.length()) / 2;
         int head_back_length = max_row_msg_length - now_str.length() - head_front_length;
-        std::cout << "/" << std::setfill('-') << std::setw(head_front_length) << "" << now << std::setfill('-') << std::setw(head_back_length - 1) << "\\" << std::endl;
-        std::cout << monitor_log.str();
-        std::cout << "\\" << std::setfill('-') << std::setw(max_row_msg_length - 1) << "/" << std::endl;
+        std::stringstream pretty_msg;
+        pretty_msg << "/" << std::setfill('-') << std::setw(head_front_length)
+                   << "" << now << std::setfill('-') << std::setw(head_back_length - 1)
+                   << "\\" << std::endl
+                   << monitor_log.str()
+                   << "\\" << std::setfill('-') << std::setw(max_row_msg_length - 1)
+                   << "/" << std::endl;
+        std::cout << pretty_msg.str();
         pool_msgs_.clear();
         workers_msgs_.clear();
         tasks_msgs_.clear();
@@ -383,14 +388,14 @@ class Monitor {
     uint64_t running_task = classify_pool.BusyWorkerCount();
     uint64_t pending_task = classify_pool.task_queue()->pending_task_count();
     uint64_t completed_task = total_task - running_task - pending_task;
-  
-    char pool_msg[256];
-    char workers_msg[256];
-    char tasks_msg[256];
-    snprintf(pool_msg, 256, " ~ ThreadPool:%s", classify_pool.name());
-    snprintf(workers_msg, 256, "Workers[Busy:%u, Idle:%u, Exited:%u, Assignable:%u, Total:%u]",
+
+    char pool_msg[64];
+    char workers_msg[128];
+    char tasks_msg[128];
+    snprintf(pool_msg, sizeof(pool_msg), " ~ ThreadPool:%s", classify_pool.name());
+    snprintf(workers_msg, sizeof(workers_msg), "Workers[Busy:%u, Idle:%u, Exited:%u, Assignable:%u, Total:%u]",
              busy_worker, idle_worker, exited_worker, assignable_worker, total_worker);
-    snprintf(tasks_msg, 256, "Tasks[Running:%lu, Waiting:%lu, Completed:%lu, Total:%lu]",
+    snprintf(tasks_msg, sizeof(tasks_msg), "Tasks[Running:%lu, Waiting:%lu, Completed:%lu, Total:%lu]",
              running_task, pending_task, completed_task, total_task);
 
     pool_msgs_.emplace_back(pool_msg);
@@ -421,7 +426,7 @@ class SmartThreadPoolBuilder {
     smart_pool_->pools_.emplace(pool_name, pool);
     return *this;
   }
-  SmartThreadPoolBuilder& EnableMonitor(const std::chrono::duration<int>& second_period = std::chrono::seconds(60)) { 
+  SmartThreadPoolBuilder& EnableMonitor(const std::chrono::duration<int>& second_period = std::chrono::seconds(60)) {
     enable_monitor_ = true;
     monitor_second_period_ = second_period;
     return *this;
