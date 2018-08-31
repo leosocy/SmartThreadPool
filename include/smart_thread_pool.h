@@ -119,7 +119,7 @@ class Task {
 class TaskPriorityQueue {
  public:
   explicit TaskPriorityQueue(const char* queue_name)
-    : queue_name_(queue_name), alive_(true), task_count_(0), waiting_task_count_(0) {
+    : queue_name_(queue_name), alive_(true), task_count_(0), pending_task_count_(0) {
   }
   TaskPriorityQueue(TaskPriorityQueue&& other) = delete;
   TaskPriorityQueue(const TaskPriorityQueue&) = delete;
@@ -157,7 +157,7 @@ class TaskPriorityQueue {
       std::unique_lock<std::mutex> lock(queue_mtx_);
       tasks_.emplace([task](){ (*task)(); }, priority);
       task_count_  += 1;
-      waiting_task_count_ += 1;
+      pending_task_count_ += 1;
     }
     queue_cv_.notify_one();
     return task->get_future();
@@ -170,12 +170,12 @@ class TaskPriorityQueue {
     }
     auto task = std::unique_ptr<Task>{new Task(std::move(tasks_.top()))};
     tasks_.pop();
-    waiting_task_count_ -= 1;
+    pending_task_count_ -= 1;
     return task;
   }
   const char* name() const { return queue_name_.c_str(); }
   uint64_t task_count() const { return task_count_; }
-  uint64_t waiting_task_count() const { return waiting_task_count_; }
+  uint64_t pending_task_count() const { return pending_task_count_; }
 
  private:
   std::string queue_name_;
@@ -185,7 +185,7 @@ class TaskPriorityQueue {
   std::atomic_bool alive_;
 
   uint64_t task_count_;
-  uint64_t waiting_task_count_;
+  uint64_t pending_task_count_;
 };
 
 class Worker {
@@ -381,8 +381,8 @@ class Monitor {
 
     uint64_t total_task = classify_pool.task_queue()->task_count();
     uint64_t running_task = classify_pool.BusyWorkerCount();
-    uint64_t waiting_task = classify_pool.task_queue()->waiting_task_count();
-    uint64_t completed_task = total_task - running_task - waiting_task;
+    uint64_t pending_task = classify_pool.task_queue()->pending_task_count();
+    uint64_t completed_task = total_task - running_task - pending_task;
   
     char pool_msg[256];
     char workers_msg[256];
@@ -391,7 +391,7 @@ class Monitor {
     snprintf(workers_msg, 256, "Workers[Busy:%u, Idle:%u, Exited:%u, Assignable:%u, Total:%u]",
              busy_worker, idle_worker, exited_worker, assignable_worker, total_worker);
     snprintf(tasks_msg, 256, "Tasks[Running:%lu, Waiting:%lu, Completed:%lu, Total:%lu]",
-             running_task, waiting_task, completed_task, total_task);
+             running_task, pending_task, completed_task, total_task);
 
     pool_msgs_.emplace_back(pool_msg);
     workers_msgs_.emplace_back(workers_msg);
