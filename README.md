@@ -2,7 +2,7 @@
 
 [![pipeline status](https://gitlab.com/leosocy/SmartThreadPool/badges/master/pipeline.svg)](https://gitlab.com/leosocy/SmartThreadPool/commits/master)
 [![codecov](https://codecov.io/gh/Leosocy/SmartThreadPool/branch/master/graph/badge.svg)](https://codecov.io/gh/Leosocy/SmartThreadPool)
-[![MIT licensed](https://img.shields.io/badge/license-MIT-green.svg)](https://raw.githubusercontent.com/PalmID/ppic/master/LICENSE)
+[![MIT licensed](https://img.shields.io/badge/license-MIT-green.svg)](https://raw.githubusercontent.com/Leosocy/SmartThreadPool/master/LICENSE)
 
 ## Features
 
